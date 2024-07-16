@@ -10,8 +10,15 @@ from lightning.pytorch.loggers import TensorBoardLogger, WandbLogger
 from matplotlib import pyplot as plt
 from torch import nn
 
+
 class CLVP(L.LightningModule):
     def __init__(
             self,
             
+    )
+        
+
+class CVVP(L.LightningModule):
+    def __init__(
+            self,
     )
