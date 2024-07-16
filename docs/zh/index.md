@@ -18,7 +18,7 @@
 此代码库根据 `BSD-3-Clause` 许可证发布, 所有模型根据 CC-BY-NC-SA-4.0 许可证发布.
 
 <p align="center">
-  <img src="https://s2.loli.net/2024/05/11/h9qSpRboTs5dGMQ.png" width="75%">
+   <img src="../assets/figs/diagram.png" width="75%">
 </p>
 
 ## 要求
