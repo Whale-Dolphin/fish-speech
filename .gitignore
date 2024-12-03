@@ -13,7 +13,7 @@ filelists
 /.vscode
 /data_server/target
 /*.npy
-/*.wav
+*.wav
 /*.mp3
 /*.lab
 /results
@@ -30,6 +30,3 @@ asr-label*
 /example
 /faster_whisper
 /.gradio
-/test.ipynb
-/tools/llama/generate_remain.py
-/audio
