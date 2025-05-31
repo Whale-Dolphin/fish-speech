@@ -2,6 +2,7 @@ from dataclasses import dataclass
 
 import loralib as lora
 
+# Only used to avoid llama's potential error, not supported in main codebase.
 
 @dataclass
 class LoraConfig:
