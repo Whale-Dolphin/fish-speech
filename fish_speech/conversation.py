@@ -3,9 +3,13 @@ from typing import Literal
 
 import torch
 
-from .tokenizer import MODALITY_TOKENS, FishTokenizer
-
-CODEBOOK_PAD_TOKEN_ID = 0
+from fish_speech.tokenizer import (
+    AUDIO_EMBED_TOKEN,
+    AUDIO_END_TOKEN,
+    AUDIO_START_TOKEN,
+    MODALITY_TOKENS,
+    FishTokenizer,
+)
 
 
 @dataclass(kw_only=True)
@@ -20,7 +24,13 @@ class VQPart(BasePart):
 
 @dataclass(kw_only=True)
 class TextPart(BasePart):
-    text: str
+    text: str | None = None
+    tokens: torch.Tensor | None = None
+
+
+@dataclass(kw_only=True)
+class AudioPart(BasePart):
+    features: torch.Tensor
 
 
 @dataclass(kw_only=True)
@@ -31,12 +41,14 @@ class EncodedMessage:
     vq_mask_labels: torch.Tensor | None = None
     vq_parts: list[torch.Tensor]
     vq_require_losses: torch.Tensor | None = None
+    audio_parts: list[torch.Tensor]
+    audio_masks: torch.Tensor | None = None
 
 
 @dataclass(kw_only=True)
 class Message:
     role: Literal["system", "user", "assistant"]
-    parts: list[VQPart | TextPart] = field(default_factory=list)
+    parts: list[VQPart | TextPart | AudioPart] = field(default_factory=list)
     add_im_start: bool = True
     add_im_end: bool = True
     cal_loss: bool = False
@@ -56,6 +68,9 @@ class Message:
         vq_parts = []
         vq_masks = []
 
+        audio_parts = []
+        audio_masks = []
+
         parts = self.parts.copy()
         if self.add_im_start:
             modality_token = MODALITY_TOKENS[self.modality] if self.modality else ""
@@ -66,30 +81,52 @@ class Message:
 
         for part in parts:
             if isinstance(part, TextPart):
-                tokens = torch.tensor(
-                    tokenizer.encode(part.text),
-                    dtype=torch.int,
-                )
+                if part.tokens is None:
+                    tokens = torch.tensor(
+                        tokenizer.encode(part.text),
+                        dtype=torch.int,
+                    )
+                else:
+                    tokens = part.tokens
             elif isinstance(part, VQPart):
                 curr_codes = part.codes.clone()
                 tokens = torch.tensor(
                     [
-                        tokenizer.semantic_id_to_token_id[i.item()]
+                        tokenizer.semantic_id_to_token_id[int(i.item())]
                         for i in curr_codes[0].int()
                     ],
                     dtype=torch.int,
                 )
                 vq_parts.append(curr_codes)
+            elif isinstance(part, AudioPart):
+                tokens = torch.tensor(
+                    (
+                        [tokenizer.get_token_id(AUDIO_START_TOKEN)]
+                        + [tokenizer.get_token_id(AUDIO_EMBED_TOKEN)]
+                        * part.features.shape[0]
+                        + [tokenizer.get_token_id(AUDIO_END_TOKEN)]
+                    ),
+                    dtype=torch.int,
+                )
+                audio_parts.append(part.features)
             else:
                 raise ValueError(f"Unsupported part type: {type(part)}")
 
             all_tokens.append(tokens)
             if isinstance(part, VQPart):
                 vq_masks.append(torch.ones_like(tokens, dtype=torch.bool))
+                audio_masks.append(torch.zeros_like(tokens, dtype=torch.bool))
+            elif isinstance(part, AudioPart):
+                vq_masks.append(torch.zeros_like(tokens, dtype=torch.bool))
+                audio_mask = torch.ones_like(tokens, dtype=torch.bool)
+                audio_mask[0] = False
+                audio_mask[-1] = False
+                audio_masks.append(audio_mask)
             else:
                 vq_masks.append(torch.zeros_like(tokens, dtype=torch.bool))
+                audio_masks.append(torch.zeros_like(tokens, dtype=torch.bool))
 
-            if self.cal_loss:
+            if self.cal_loss and not isinstance(part, AudioPart):
                 all_labels.append(tokens.clone())
             else:
                 all_labels.append(torch.full_like(tokens, -100))
@@ -97,7 +134,7 @@ class Message:
         tokens = torch.cat(all_tokens, dim=0)
         labels = torch.cat(all_labels, dim=0)
         vq_masks = torch.cat(vq_masks, dim=0)
-
+        audio_masks = torch.cat(audio_masks, dim=0)
         assert tokens.shape == labels.shape == vq_masks.shape
 
         if self.ignore_im_start_loss and self.add_im_start:
@@ -109,6 +146,8 @@ class Message:
             vq_parts=vq_parts,
             vq_mask_tokens=vq_masks,
             vq_mask_labels=vq_masks,
+            audio_parts=audio_parts,
+            audio_masks=audio_masks,
         )
 
 
@@ -132,6 +171,8 @@ class Conversation:
         vq_mask_tokens = []
         vq_mask_labels = []
         vq_require_losses = []
+        audio_parts = []
+        audio_masks = []
         ignore_loss_token_ids = [tokenizer.get_token_id(i) for i in ignore_loss_tokens]
 
         for message in self.messages:
@@ -143,6 +184,8 @@ class Conversation:
             vq_parts.extend(encoded.vq_parts)
             vq_mask_tokens.append(encoded.vq_mask_tokens)
             vq_mask_labels.append(encoded.vq_mask_labels)
+            audio_parts.extend(encoded.audio_parts)
+            audio_masks.append(encoded.audio_masks)
             vq_require_losses.extend([message.cal_loss] * len(encoded.vq_parts))
 
         tokens = torch.cat(tokens, dim=0)
@@ -150,12 +193,14 @@ class Conversation:
         vq_mask_tokens = torch.cat(vq_mask_tokens, dim=0)
         vq_mask_labels = torch.cat(vq_mask_labels, dim=0)
         vq_require_losses = torch.tensor(vq_require_losses, dtype=torch.bool)
+        audio_masks = torch.cat(audio_masks, dim=0)
 
         if add_shift:
             tokens = tokens[:-1]
             labels = labels[1:]
             vq_mask_tokens = vq_mask_tokens[:-1]
             vq_mask_labels = vq_mask_labels[1:]
+            audio_masks = audio_masks[:-1]
 
         for i in ignore_loss_token_ids:
             assert i != -100 and i is not None
@@ -164,7 +209,7 @@ class Conversation:
         assert tokens.dtype in [
             torch.int,
             torch.long,
-        ], f"Invalid dtype: {tokens.dtype}, conv: {conversation}"
+        ], f"Invalid dtype: {tokens.dtype}"
 
         return EncodedMessage(
             tokens=tokens,
@@ -173,13 +218,15 @@ class Conversation:
             vq_mask_tokens=vq_mask_tokens,
             vq_mask_labels=vq_mask_labels,
             vq_require_losses=vq_require_losses,
+            audio_parts=audio_parts,
+            audio_masks=audio_masks,
         )
 
     def encode_for_inference(
         self: "Conversation",
         tokenizer: FishTokenizer,
         num_codebooks: int,
-    ) -> EncodedMessage:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         # self.visualize(tokenizer)
 
         encoded = self.encode(tokenizer, add_shift=False)
@@ -187,16 +234,25 @@ class Conversation:
         values = torch.zeros((num_codebooks + 1, len(tokens)), dtype=torch.int)
         values[0] = tokens
 
-        if encoded.vq_parts is None or len(encoded.vq_parts) == 0:
-            return values
+        if (encoded.vq_parts is None or len(encoded.vq_parts) == 0) and (
+            encoded.audio_parts is None or len(encoded.audio_parts) == 0
+        ):
+            return values, None, None
 
-        vq_parts = encoded.vq_parts
-        vq_parts = [part.to(values.device) for part in vq_parts]
-        vq_parts = torch.cat(vq_parts, dim=1)
-        values[0, encoded.vq_mask_tokens] = vq_parts[0] + tokenizer.semantic_begin_id
-        values[1:, encoded.vq_mask_tokens] = vq_parts
+        audio_parts = audio_masks = None
+        if encoded.vq_parts is not None and len(encoded.vq_parts) > 0:
+            vq_parts = encoded.vq_parts
+            vq_parts = torch.cat(vq_parts, dim=1)
+            values[0, encoded.vq_mask_tokens] = (
+                vq_parts[0] + tokenizer.semantic_begin_id
+            )
+            values[1:, encoded.vq_mask_tokens] = vq_parts
 
-        return values
+        if encoded.audio_parts is not None and len(encoded.audio_parts) > 0:
+            audio_parts = torch.cat(encoded.audio_parts, dim=0)
+            audio_masks = encoded.audio_masks[None, :]
+
+        return values, audio_masks, audio_parts
 
     def visualize(
         self: "Conversation",
@@ -207,34 +263,35 @@ class Conversation:
             tokenizer, add_shift=False, ignore_loss_tokens=ignore_loss_tokens
         )
 
+        # Colors for alternating tokens
         colors = {
-            "purple": "\033[95m",
-            "yellow": "\033[93m",
-            "red": "\033[91m",
-            "cyan": "\033[96m",
+            "blue": "\033[94m",  # Light blue
+            "cyan": "\033[96m",  # Cyan
+            "green": "\033[92m",  # Light green
+            "dark_green": "\033[32m",  # Dark green
         }
-        first_idx = 0
-        second_idx = 0
+        blue_idx = 0
+        green_idx = 0
 
-        def print_first_group(x):
-            nonlocal first_idx
-            color = colors["purple"] if first_idx % 2 == 0 else colors["yellow"]
+        def print_in_blue(x):
+            nonlocal blue_idx
+            color = colors["blue"] if blue_idx % 2 == 0 else colors["cyan"]
             print(f"{color}{x}\033[0m", end="")
-            first_idx += 1
+            blue_idx += 1
 
-        def print_second_group(x):
-            nonlocal second_idx
-            color = colors["red"] if second_idx % 2 == 0 else colors["cyan"]
+        def print_in_green(x):
+            nonlocal green_idx
+            color = colors["green"] if green_idx % 2 == 0 else colors["dark_green"]
             print(f"{color}{x}\033[0m", end="")
-            second_idx += 1
+            green_idx += 1
 
         for tok, lab in zip(encoded.tokens, encoded.labels):
-            val = tokenizer.decode([tok])
+            val = tokenizer.decode([int(tok.item())])
 
             if lab == -100:
-                print_second_group(val)
+                print_in_green(val)
             else:
-                print_first_group(val)
+                print_in_blue(val)
 
         print()
 
@@ -258,7 +315,7 @@ if __name__ == "__main__":
         cal_loss=True,
     )
     conversation = Conversation([message0, message1])
-    tokenizer = FishTokenizer.from_pretrained("checkpoints/Qwen2-1.5B-Instruct")
+    tokenizer = AutoTokenizer.from_pretrained("checkpoints/Qwen2-1.5B-Instruct")
     conversation.visualize(tokenizer)
 
     encoded = conversation.encode(tokenizer)

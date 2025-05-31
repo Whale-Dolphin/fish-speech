@@ -989,7 +989,7 @@ if __name__ == "__main__":
             print(f"Warning: Skipped loading some keys due to shape mismatch: {skipped_keys}")
         return filtered_state_dict, skipped_keys
 
-    model = hydra.utils.instantiate(OmegaConf.load("modded_dac_vq.yaml"))
+    model = hydra.utils.instantiate(OmegaConf.load("fish_speech/configs/modded_dac_vq.yaml"))
     sd = torch.load("../fish-speech/checkpoints/openaudio-s1-mini/firefly-gan-large.pth")
     filtered_sd, skipped_keys = filter_state_dict_shapes(sd, model)
     print(f"Skipped keys: {skipped_keys}")
