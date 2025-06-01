@@ -14,7 +14,7 @@ from torch.nn import functional as F
 from torch.nn.attention import SDPBackend, sdpa_kernel
 from torch.utils.checkpoint import checkpoint
 
-from fish_speech.models.lora import LoraConfig, setup_lora
+from fish_speech.models.text2semantic.lora import LoraConfig, setup_lora
 from fish_speech.tokenizer import FishTokenizer
 
 MODEL_ARGS_VAR = {}
