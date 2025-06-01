@@ -906,262 +906,209 @@ def swap_model(input_queue: queue.Queue, state_dict: dict):
     return response_queue.get()
 
 if __name__ == "__main__":
-    import argparse
-    from pathlib import Path
+    # 测试配置
+    checkpoint_path = 'checkpoints/openaudio-s1-mini'
+    device = 'cuda'
+    precision = torch.bfloat16
     
-    from fish_speech.models.text2semantic.llama import (
-        BaseTransformer,
-        NaiveTransformer,
-        DualARTransformer
-    )
-    from fish_speech.tokenizer import FishTokenizer
-    from fish_speech.conversation import Conversation, Message, TextPart, VQPart
-    
-    def debug_conversation_encoding(conversation, tokenizer, config):
-        """调试对话编码过程"""
-        print("\n=== 调试对话编码 ===")
+    def test_vq_generation():
+        """测试VQ序列生成功能"""
+        print("🔧 开始加载模型...")
         
-        # 可视化对话
-        print("对话可视化:")
-        conversation.visualize(tokenizer)
-        
-        # 编码对话
-        prompt, audio_masks, audio_parts = conversation.encode_for_inference(
-            tokenizer=tokenizer,
-            num_codebooks=config.num_codebooks
-        )
-        
-        print(f"Prompt形状: {prompt.shape}")
-        print(f"第一个codebook的tokens: {prompt[0].tolist()}")
-        
-        # 解码最后几个token来查看
-        last_tokens = prompt[0, -10:].tolist()
-        print(f"最后10个tokens: {last_tokens}")
-        for i, token_id in enumerate(last_tokens):
-            try:
-                decoded = tokenizer.decode([token_id])
-                print(f"  Token {i}: {token_id} -> '{decoded}'")
-            except:
-                print(f"  Token {i}: {token_id} -> [无法解码]")
-        
-        return prompt, audio_masks, audio_parts
-    
-    def create_speech_conversation(system_prompt: str, user_text: str) -> Conversation:
-        """创建用于语音生成的标准对话格式"""
-        messages = [
-            Message(
-                role="system",
-                parts=[TextPart(text=system_prompt)],
-                modality="text"
-            ),
-            Message(
-                role="user",
-                parts=[TextPart(text=user_text)],
-                modality="text"
-            ),
-            Message(
-                role="assistant",
-                parts=[],
-                add_im_end=False,
-                modality="voice"
-            )
-        ]
-        return Conversation(messages=messages)
-    
-    def test_multiple_scenarios():
-        """测试多种场景的VQ生成"""
-        
-        # 设置参数
-        checkpoint_path = "checkpoints/openaudio-s1-mini"  # 请根据实际路径修改
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        precision = torch.bfloat16
-        
-        print(f"使用设备: {device}")
-        print(f"精度: {precision}")
-        
+        # 加载模型和tokenizer
         try:
-            # 加载tokenizer和配置
-            print("正在加载tokenizer...")
-            tokenizer = FishTokenizer.from_pretrained(checkpoint_path)
-            config = BaseModelArgs.from_pretrained(checkpoint_path)
-            print(f"Tokenizer加载成功，词汇表大小: {tokenizer.vocab_size}")
-            print(f"语义token范围: [{tokenizer.semantic_begin_id}, {tokenizer.semantic_end_id}]")
-            
-            # 加载模型
-            print("正在加载模型...")
             model, decode_one_token = load_model(
                 checkpoint_path=checkpoint_path,
                 device=device,
                 precision=precision,
                 compile=False
             )
-            print(f"模型加载成功，类型: {type(model).__name__}")
-            
-            # 测试场景1: 遵循模板的基础对话
-            print("\n=== 测试场景1: 标准模板对话 ===")
-            conversation1 = create_speech_conversation(
-                "Speak out the provided text.",
-                "hello world"
+            tokenizer = FishTokenizer.from_pretrained(checkpoint_path)
+            config = BaseModelArgs.from_pretrained(checkpoint_path)
+            print("✅ 模型加载成功!")
+        except Exception as e:
+            print(f"❌ 模型加载失败: {e}")
+            return False
+        
+        # 创建测试用的ContentSequence
+        print("\n📝 创建测试序列...")
+        from fish_speech.content_sequence import ContentSequence, TextPart, VQPart
+        
+        # 创建一个包含文本和VQ的序列
+        seq = ContentSequence(modality="voice")
+        
+        # 添加一些文本作为prompt
+        seq.append(TextPart(text="<|im_start|>user\n你好，请说一段话。<|im_end|>", cal_loss=False))
+        seq.append(TextPart(text="<|im_start|>assistant\n", cal_loss=False))
+        
+        # 可选：添加一些VQ codes作为起始
+        # seq.append(VQPart(codes=torch.randint(0, config.codebook_size, (config.num_codebooks, 5)), cal_loss=True))
+        
+        print("✅ 测试序列创建成功!")
+        
+        # 编码序列
+        print("\n🔄 编码输入序列...")
+        try:
+            prompt, audio_masks, audio_parts = seq.encode_for_inference(
+                tokenizer=tokenizer, 
+                num_codebooks=config.num_codebooks
             )
-            test_generation_scenario("标准模板对话", conversation1, tokenizer, config, model, decode_one_token, device, precision)
+            prompt = prompt.to(device)
+            if audio_masks is not None:
+                audio_masks = audio_masks.to(device)
+            if audio_parts is not None:
+                audio_parts = audio_parts.to(device, dtype=precision)
             
-            # 测试场景2: 中文指令
-            print("\n=== 测试场景2: 中文指令 ===")
-            conversation2 = create_speech_conversation(
-                "请将提供的文本用语音读出来。",
-                "你好世界"
-            )
-            test_generation_scenario("中文指令", conversation2, tokenizer, config, model, decode_one_token, device, precision)
+            print(f"✅ 输入序列编码完成! 序列长度: {prompt.shape[1]}")
+            print(f"📊 输入形状: {prompt.shape}")
+        except Exception as e:
+            print(f"❌ 序列编码失败: {e}")
+            return False
+        
+        # 生成参数
+        generation_kwargs = {
+            "max_new_tokens": 50,
+            "temperature": 0.7,
+            "top_p": 0.9,
+            "repetition_penalty": 1.1,
+            "num_samples": 1,
+            "early_stop_threshold": 0.6,
+        }
+        
+        print(f"\n🎯 开始生成VQ序列 (max_new_tokens={generation_kwargs['max_new_tokens']})...")
+        
+        # 调用生成函数
+        try:
+            im_end_id = tokenizer.get_token_id(IM_END_TOKEN)
+            generated_tokens = []
             
-            # 测试场景3: 更长的文本
-            print("\n=== 测试场景3: 更长的文本 ===")
-            conversation3 = create_speech_conversation(
-                "Speak out the provided text.",
-                "Hello, this is a test of the fish speech model."
-            )
-            test_generation_scenario("更长的文本", conversation3, tokenizer, config, model, decode_one_token, device, precision)
+            # 生成序列
+            for i, token_batch in enumerate(generate(
+                model=model,
+                prompt=prompt,
+                audio_masks=audio_masks,
+                audio_parts=audio_parts,
+                im_end_id=im_end_id,
+                decode_one_token=decode_one_token,
+                **generation_kwargs
+            )):
+                generated_tokens.append(token_batch)
+                
+                # 打印生成进度
+                if i % 10 == 0 or i < 5:
+                    token = token_batch[0, 0, 0].item()  # 获取第一个样本的第一个codebook的token
+                    if tokenizer.semantic_begin_id <= token <= tokenizer.semantic_end_id:
+                        print(f"  步骤 {i+1}: 生成语义token {token}")
+                    elif token == im_end_id:
+                        print(f"  步骤 {i+1}: 生成结束token")
+                        break
+                    else:
+                        decoded = tokenizer.decode([token])
+                        print(f"  步骤 {i+1}: 生成文本token '{decoded}'")
+                
+                # 检查是否生成了结束token
+                if token_batch[0, 0, 0].item() == im_end_id:
+                    break
             
-            # 测试场景4: 对话式指令
-            print("\n=== 测试场景4: 对话式指令 ===")
-            conversation4 = create_speech_conversation(
-                "You are a helpful voice assistant. Respond to the user's request with speech.",
-                "请说你好"
-            )
-            test_generation_scenario("对话式指令", conversation4, tokenizer, config, model, decode_one_token, device, precision)
+            print(f"✅ 生成完成! 总共生成了 {len(generated_tokens)} 个token")
             
         except Exception as e:
-            print(f"测试过程中出现错误: {e}")
+            print(f"❌ 生成过程失败: {e}")
+            import traceback
+            traceback.print_exc()
+            return False
+        
+        # 分析生成结果
+        print("\n📊 分析生成结果...")
+        try:
+            text_tokens = []
+            vq_tokens = []
+            
+            for token_batch in generated_tokens:
+                token = token_batch[0, 0, 0].item()  # 第一个样本，第一个codebook
+                
+                if tokenizer.semantic_begin_id <= token <= tokenizer.semantic_end_id:
+                    # VQ token
+                    vq_codes = token_batch[0, 1:, 0].cpu().numpy()  # 获取其他codebook的codes
+                    vq_tokens.append((token, vq_codes))
+                else:
+                    # 文本token
+                    text_tokens.append(token)
+            
+            print(f"📝 生成的文本tokens数量: {len(text_tokens)}")
+            print(f"🎵 生成的VQ tokens数量: {len(vq_tokens)}")
+            
+            # 解码文本部分
+            if text_tokens:
+                try:
+                    decoded_text = tokenizer.decode(text_tokens)
+                    print(f"📖 解码的文本内容: '{decoded_text}'")
+                except:
+                    print("⚠️  文本解码失败")
+            
+            # 显示VQ信息
+            if vq_tokens:
+                print(f"🎵 VQ序列信息:")
+                for i, (semantic_token, codes) in enumerate(vq_tokens[:5]):  # 只显示前5个
+                    semantic_id = semantic_token - tokenizer.semantic_begin_id
+                    print(f"  VQ-{i+1}: semantic_id={semantic_id}, codes={codes[:3]}...")  # 只显示前3个codebook
+                if len(vq_tokens) > 5:
+                    print(f"  ... (还有 {len(vq_tokens)-5} 个VQ tokens)")
+            
+            print("✅ 测试成功! 模型能够正常生成VQ序列")
+            return True
+            
+        except Exception as e:
+            print(f"❌ 结果分析失败: {e}")
+            return False
+    
+    def test_content_sequence_encoding():
+        """测试ContentSequence编码功能"""
+        print("\n🧪 测试ContentSequence编码功能...")
+        
+        try:
+            tokenizer = FishTokenizer.from_pretrained(checkpoint_path)
+            config = BaseModelArgs.from_pretrained(checkpoint_path)
+            
+            from fish_speech.content_sequence import ContentSequence, TextPart, VQPart
+            
+            # 创建包含多种内容的序列
+            seq = ContentSequence(modality="voice")
+            seq.append(TextPart(text="Hello", cal_loss=False))
+            seq.append(VQPart(codes=torch.randint(0, config.codebook_size, (config.num_codebooks, 10)), cal_loss=True))
+            seq.append(TextPart(text="World", cal_loss=True))
+            
+            # 可视化序列
+            print("📋 原始序列可视化:")
+            seq.visualize(tokenizer, merge_semantic_tokens=True)
+            
+            # 编码序列
+            values, audio_masks, audio_parts = seq.encode_for_inference(tokenizer, config.num_codebooks)
+            print(f"📊 编码结果形状: {values.shape}")
+            print(f"🎭 音频掩码: {audio_masks is not None}")
+            print(f"🎵 音频特征: {audio_parts is not None}")
+            
+            print("✅ ContentSequence编码测试成功!")
+            return True
+            
+        except Exception as e:
+            print(f"❌ ContentSequence编码测试失败: {e}")
             import traceback
             traceback.print_exc()
             return False
     
-    def test_generation_scenario(scenario_name, conversation, tokenizer, config, model, decode_one_token, device, precision):
-        """测试单个生成场景"""
-        print(f"\n--- {scenario_name} ---")
-        
-        # 调试对话编码
-        prompt, audio_masks, audio_parts = debug_conversation_encoding(conversation, tokenizer, config)
-        
-        prompt = prompt.to(device)
-        audio_masks = audio_masks.to(device) if audio_masks is not None else None
-        audio_parts = audio_parts.to(device, dtype=precision) if audio_parts is not None else None
-        
-        # 设置生成参数 - 调整参数来鼓励生成
-        im_end_id = tokenizer.get_token_id(IM_END_TOKEN)
-        generation_kwargs = {
-            "prompt": prompt,
-            "audio_masks": audio_masks,
-            "audio_parts": audio_parts,
-            "max_new_tokens": 50,  # 适合语音生成的token数量
-            "im_end_id": im_end_id,
-            "temperature": 0.8,  # 适中的温度设置
-            "top_p": 0.95,
-            "repetition_penalty": 1.1,  # 适度的重复惩罚
-            "num_samples": 1,
-            "early_stop_threshold": 0.6,  # 恢复早停机制
-        }
-        
-        print(f"生成参数: temperature={generation_kwargs['temperature']}, top_p={generation_kwargs['top_p']}")
-        
-        # 生成tokens
-        generated_tokens = []
-        vq_tokens_found = False
-        text_tokens = []
-        vq_sequences = []
-        
-        print("开始生成...")
-        for i, tokens in enumerate(generate(
-            model=model,
-            decode_one_token=decode_one_token,
-            **generation_kwargs
-        )):
-            generated_tokens.append(tokens)
-            
-            # 检查是否包含语义token
-            batch_tokens = tokens[0]  # 取第一个样本
-            token_id = batch_tokens[0, 0].item()  # 第一个codebook的token
-            
-            is_semantic = (
-                tokenizer.semantic_begin_id <= token_id <= tokenizer.semantic_end_id
-            )
-            
-            if is_semantic:
-                vq_tokens_found = True
-                vq_codes = batch_tokens[1:].clone()  # 获取VQ codes（除了第一个codebook）
-                vq_sequences.append(vq_codes)
-                print(f"步骤 {i+1}: ✅ 发现VQ codes - Token ID: {token_id}, VQ形状: {vq_codes.shape}")
-            elif token_id == im_end_id:
-                print(f"步骤 {i+1}: 遇到结束token")
-                break
-            else:
-                text_tokens.append(token_id)
-                try:
-                    decoded_text = tokenizer.decode([token_id])
-                    print(f"步骤 {i+1}: 文本token - '{decoded_text}' (ID: {token_id})")
-                except:
-                    print(f"步骤 {i+1}: 未知token - ID: {token_id}")
-            
-            # 增加显示长度
-            if i >= 20:  # 适当的显示步数限制
-                print("达到最大显示步数，停止...")
-                break
-        
-        # 结果分析
-        print(f"\n{scenario_name} 结果:")
-        if vq_tokens_found:
-            print(f"✅ 成功生成VQ codes！数量: {len(vq_sequences)}")
-            if vq_sequences:
-                vq_tensor = torch.stack(vq_sequences, dim=-1)
-                print(f"VQ codes形状: {vq_tensor.shape}, 范围: [{vq_tensor.min().item()}, {vq_tensor.max().item()}]")
-        else:
-            print(f"❌ 未生成VQ codes")
-        
-        if text_tokens:
-            try:
-                decoded_text = tokenizer.decode(text_tokens)
-                print(f"生成的文本: '{decoded_text}'")
-            except:
-                print(f"文本token数量: {len(text_tokens)}")
-        
-        return vq_tokens_found
+    # 运行测试
+    print("🚀 开始运行Fish-Speech VQ生成测试")
+    print("=" * 50)
     
-    def main():
-        """主函数"""
-        parser = argparse.ArgumentParser(description="测试Fish Speech模型VQ codes生成")
-        parser.add_argument(
-            "--checkpoint", 
-            type=str, 
-            default="checkpoints/openaudio-s1-mini",
-            help="模型checkpoint路径"
-        )
-        
-        args = parser.parse_args()
-        
-        print("=== Fish Speech VQ Generation 多场景测试 ===")
-        print(f"检查点路径: {args.checkpoint}")
-        
-        if not Path(args.checkpoint).exists():
-            print(f"错误: 检查点路径不存在: {args.checkpoint}")
-            print("请确保路径正确，或者使用 --checkpoint 参数指定正确的路径")
-            return
-        
-        success = test_multiple_scenarios()
-        
-        if success:
-            print("\n🎉 测试成功！模型能够正常生成VQ codes")
-        else:
-            print("\n❌ 测试失败！请检查模型和配置")
-        
-        print("\n=== 调试建议 ===")
-        print("1. 确保使用正确的系统提示词引导模型生成语音")
-        print("2. 检查模型是否正确加载了语音生成权重")
-        print("3. 尝试调整temperature (0.7-1.0) 和top_p (0.9-0.95) 参数")
-        print("4. 确认tokenizer的语义token范围配置正确")
-        print("5. 检查对话格式是否符合模型训练时的格式")
-        print("6. 如果仍有问题，可以尝试不同的系统提示词")
-        print("\n=== 推荐的系统提示词 ===")
-        print("英文: 'Speak out the provided text.'")
-        print("中文: '请将提供的文本用语音读出来。'")
-        print("对话式: 'You are a helpful voice assistant. Respond with speech.'")
+    # 测试ContentSequence编码
+    if test_content_sequence_encoding():
+        print("\n" + "=" * 50)
+        # 测试VQ生成
+        test_vq_generation()
+    else:
+        print("❌ ContentSequence测试失败，跳过VQ生成测试")
     
-    main()
+    print("\n" + "=" * 50)
+    print("🏁 测试完成!")
+    
