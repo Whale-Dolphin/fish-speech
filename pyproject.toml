@@ -46,6 +46,9 @@ dependencies = [
     "tiktoken>=0.8.0",
     "pydantic==2.9.2",
     "cachetools",
+    "descript-audiotools",
+    "descript-audio-codec>=1.0.0",
+    "ipykernel>=6.29.5",
 ]
 
 [project.optional-dependencies]
@@ -60,3 +63,6 @@ build-backend = "setuptools.build_meta"
 
 [tool.setuptools]
 packages = ["fish_speech", "tools"]
+
+[tool.uv.sources]
+descript-audiotools = { git = "https://github.com/descriptinc/audiotools" }

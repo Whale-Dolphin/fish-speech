@@ -3,12 +3,16 @@ import typing as tp
 from dataclasses import dataclass
 from typing import List, Optional, Union
 
+import hydra
+import librosa
 import numpy as np
+import soundfile as sf
 import torch
 from audiotools import AudioSignal
 from audiotools.ml import BaseModel
 from dac.model.base import CodecMixin
 from dac.nn.layers import Snake1d, WNConv1d, WNConvTranspose1d
+from omegaconf import OmegaConf
 from torch import Tensor, nn
 from torch.nn import functional as F
 from torch.nn.utils.parametrizations import weight_norm
@@ -29,7 +33,6 @@ def find_multiple(n: int, k: int) -> int:
     if n % k == 0:
         return n
     return n + k - (n % k)
-
 
 @dataclass
 class ModelArgs:
@@ -972,11 +975,6 @@ class DAC(BaseModel, CodecMixin):
 
 
 if __name__ == "__main__":
-    import hydra
-    import librosa
-    import soundfile as sf
-    from omegaconf import OmegaConf
-
     def filter_state_dict_shapes(params, model):
         model_state_dict = model.state_dict()
         filtered_state_dict = {
@@ -990,7 +988,7 @@ if __name__ == "__main__":
         return filtered_state_dict, skipped_keys
 
     model = hydra.utils.instantiate(OmegaConf.load("fish_speech/configs/modded_dac_vq.yaml"))
-    sd = torch.load("../fish-speech/checkpoints/openaudio-s1-mini/firefly-gan-large.pth")
+    sd = torch.load("checkpoints/openaudio-s1-mini/firefly-gan-large.pth")
     filtered_sd, skipped_keys = filter_state_dict_shapes(sd, model)
     print(f"Skipped keys: {skipped_keys}")
     model.load_state_dict(filtered_sd, strict=False)

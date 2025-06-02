@@ -1,0 +1,14 @@
+probs: tensor([[0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 5.7812e-01,
+         0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00, 0.0000e+00,
+         0.0000e+00, 0.0000e+00, 0.0000e+00, 5.2452e-05, 2.2461e-02, 0.0000e+00]],
+       device='cuda:0', dtype=torch.bfloat16)
+probs: tensor([], device='cuda:0', size=(1, 0), dtype=torch.bfloat16)
+probs: tensor([], device='cuda:0', size=(1, 0), dtype=torch.bfloat16)
+probs: tensor([], device='cuda:0', size=(1, 0), dtype=torch.bfloat16)
+probs: tensor([], device='cuda:0', size=(1, 0), dtype=torch.bfloat16)
+probs: tensor([], device='cuda:0', size=(1, 0), dtype=torch.bfloat16)
+probs: tensor([], device='cuda:0', size=(1, 0), dtype=torch.bfloat16)
+probs: tensor([], device='cuda:0', size=(1, 0), dtype=torch.bfloat16)
+probs: tensor([], device='cuda:0', size=(1, 0), dtype=torch.bfloat16)
+probs: tensor([], device='cuda:0', size=(1, 0), dtype=torch.bfloat16)
+Generated tokens shape: torch.Size([1, 1, 8192])
