@@ -453,7 +453,7 @@ class BaseTransformer(nn.Module):
         quant_path = Path(path) / "model.int8.pth"
 
         if quant_path.exists():
-            from flash_fish_inference.services.llm.quantize import (
+            from fish_speech.models.text2semantic.quantize import (
                 WeightOnlyInt8QuantHandler,
             )
 
