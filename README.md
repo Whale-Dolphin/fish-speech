@@ -91,17 +91,10 @@ We do not hold any responsibility for any illegal usage of the codebase. Please 
 
 ## Documents
 
-- [English](https://speech.fish.audio/)
-- [中文](https://speech.fish.audio/zh/)
-- [日本語](https://speech.fish.audio/ja/)
-- [Portuguese (Brazil)](https://speech.fish.audio/pt/)
+- [Build Envrionment](docs/en/install.md)
+- [Inference](docs/en/inference.md)
 
-## Samples (2024/10/02 V1.4)
-
-- [English](https://speech.fish.audio/samples/)
-- [中文](https://speech.fish.audio/zh/samples/)
-- [日本語](https://speech.fish.audio/ja/samples/)
-- [Portuguese (Brazil)](https://speech.fish.audio/pt/samples/)
+It should be noted that the current model **DOESN'T SUPPORT FINETUNE**.
 
 ## Credits
 
